@@ -1,6 +1,7 @@
 # -*- encoding: utf-8 -*-
 
 import hooks
+from log import logger
 from time import sleep, time
 from collections import OrderedDict
 from ws4py.server.geventserver import WSGIServer
@@ -19,6 +20,12 @@ class BaseClient(object):
         self._ws.after_call("closed", lambda *a, **kw: setattr(self, "_connected", False))
         self._ws.after_call("closed", lambda *a, **kw: self.on_disconnected())
         self._ws.after_call("received_message", lambda m: self.on_read(m))
+        self._ws.unhandled_error = self._unhandled_error
+
+    def _unhandled_error(self, e):
+        if not self._ws.sock:
+            return
+        logger.exception("Failed to receive data")
 
     @property
     def local_address(self):
@@ -48,7 +55,7 @@ class BaseClient(object):
         pass
 
     def disconnect(self):
-        self._ws.close()
+        self._ws.close_connection()
 
     @property
     def connected(self):
