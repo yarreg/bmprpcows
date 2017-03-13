@@ -120,8 +120,8 @@ class BaseRPCClient(transport.BaseClient):
 
 
 class RPCClient(transport.Client, BaseRPCClient):
-    def __init__(self, url, handler_cls=BaseHandler):
-        transport.Client.__init__(self, url)
+    def __init__(self, url, handler_cls=BaseHandler, heartbeat_freq=None):
+        transport.Client.__init__(self, url, heartbeat_freq=heartbeat_freq)
         BaseRPCClient.__init__(self, ws=self._ws, handler_cls=handler_cls)
 
 

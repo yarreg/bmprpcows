@@ -56,9 +56,12 @@ class BaseClient(object):
 
 
 class Client(BaseClient):
-    def __init__(self, url):
+    def __init__(self, url, heartbeat_freq=None):
         WrappedWebSocketClient = hooks.create_class(WebSocketClient)
         ws = WrappedWebSocketClient(url, protocols=["http-only", "chat"])
+        # TODO: add in constructor when this commit will be in release
+        # https://github.com/Lawouach/WebSocket-for-Python/commit/3befaef6d279e84d9bbf7ee1c4d2c61980d45b95
+        ws.heartbeat_freq = heartbeat_freq 
         super(Client, self).__init__(ws=ws)
 
     def connect(self):
