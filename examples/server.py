@@ -9,4 +9,4 @@ class H(BaseHandler):
         return "hello"
 
 s = RPCServer(handler_cls=H)
-s.listen("127.0.0.1", 9091)
+s.listen("127.0.0.1", 9091, '/test/ws')

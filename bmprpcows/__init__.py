@@ -10,3 +10,4 @@ __name__    = "bmprpcows"
 import error
 from log import logger
 from rpc import *
+from transport import run_server

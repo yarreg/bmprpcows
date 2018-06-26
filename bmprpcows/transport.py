@@ -1,13 +1,16 @@
 # -*- encoding: utf-8 -*-
 
+import re
 import hooks
 from log import logger
 from time import sleep, time
 from collections import OrderedDict
+from urlparse import parse_qs
 from ws4py.server.geventserver import WSGIServer
 from ws4py.websocket import WebSocket
 from ws4py.server.geventserver import WebSocketWSGIApplication
 from ws4py.client.geventclient import WebSocketClient
+from ws4py.exc import HandshakeError
 
 
 class BaseClient(object):
@@ -48,14 +51,17 @@ class BaseClient(object):
         pass
 
     def write(self, data):
-        self._ws.send(data, binary=True)
+        if 'ws4py.socket' in self._ws.environ:
+            self._ws.send(data, binary=True)
+        else:
+            self._ws._write(data)
         self.on_write(data)
 
-    def connect(self):
-        pass
-
-    def disconnect(self):
-        self._ws.close_connection()
+    def disconnect(self, code=1000, reason=''):
+        if 'ws4py.socket' in self._ws.environ:
+            self._ws.close(code, reason)
+        else:
+            self._ws.close_connection()
 
     @property
     def connected(self):
@@ -65,10 +71,7 @@ class BaseClient(object):
 class Client(BaseClient):
     def __init__(self, url, heartbeat_freq=None):
         WrappedWebSocketClient = hooks.create_class(WebSocketClient)
-        ws = WrappedWebSocketClient(url, protocols=["http-only", "chat"])
-        # TODO: add in constructor when this commit will be in release
-        # https://github.com/Lawouach/WebSocket-for-Python/commit/3befaef6d279e84d9bbf7ee1c4d2c61980d45b95
-        ws.heartbeat_freq = heartbeat_freq 
+        ws = WrappedWebSocketClient(url, protocols=["http-only", "chat"], heartbeat_freq=heartbeat_freq)
         super(Client, self).__init__(ws=ws)
 
     def connect(self):
@@ -82,16 +85,28 @@ class ServerClient(BaseClient):
         self.server = server
         super(ServerClient, self).__init__(ws=ws)
 
+    @property
+    def query(self):
+        return parse_qs(self._ws.environ.get('QUERY_STRING', ''))
+
+    @property
+    def path(self):
+        return self._ws.environ.get('PATH_INFO')
+
 
 class Server(object):
     def __init__(self):
-        self._clients = OrderedDict()
+        self._wsgi_app = None
+        self._clients  = OrderedDict()
 
     def on_connected(self, client):
         self._clients[client] = time()
 
     def on_disconnected(self, client):
         self._clients.pop(client, None)
+
+    def on_handshake_error(self, client, exc):
+        raise exc
 
     @property
     def clients(self):
@@ -104,7 +119,7 @@ class Server(object):
     def _create_client(self, ws):
         return ServerClient(ws=ws, server=self)
 
-    def _client_factory(self, *args, **kwargs):
+    def _handler_factory(self, *args, **kwargs):
         WrappedWebSocket = hooks.create_class(WebSocket)
         ws = WrappedWebSocket(*args, **kwargs)
 
@@ -114,9 +129,42 @@ class Server(object):
 
         return ws
 
+    def get_wsgi_application(self):
+        def wrapper(ws_app, environ, start_response):
+            try:
+                ws_app(environ, start_response)
+            except HandshakeError as he:
+                sock   = environ['wsgi.input'].rfile._sock
+                ws     = self._handler_factory(sock, environ=environ)
+                client = self._create_client(ws)
+                self.on_handshake_error(client, he)
+            return []
+
+        if not self._wsgi_app:
+            ws_app = WebSocketWSGIApplication(handler_cls=self._handler_factory)
+            self._wsgi_app = lambda *args: wrapper(ws_app, *args)
+
+        return self._wsgi_app
+
     def listen(self, host, port):
-        server = WSGIServer((host, port), WebSocketWSGIApplication(handler_cls=self._client_factory))
+        server = WSGIServer((host, port), self.get_wsgi_application())
         server.serve_forever()
 
 
+def run_server(host, port, routes):
+    compiled_routes = [(re.compile(route), app) for route, app in routes]
+
+    def router(environ, start_response):
+        query_path = environ.get('PATH_INFO', '')
+        for route, app in compiled_routes:
+            if route.match(query_path):
+                if hasattr(app, 'get_wsgi_application'):
+                    app = app.get_wsgi_application()
+                return app(environ, start_response)
+
+        start_response("404 Not Found", [('Content-type', 'text/plain')])
+        return []
+
+    server = WSGIServer((host, port), router)
+    server.serve_forever()
 
